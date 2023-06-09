@@ -1,0 +1,111 @@
+max_seq_len: 512
+global_seed: 17
+
+# Run Name
+run_name: run-fine-tuning-mpt-7b
+
+model:
+  name: hf_causal_lm
+  pretrained: true
+  pretrained_model_name_or_path: mosaicml/mpt-7b
+  config_overrides:
+    attn_config:
+      attn_impl: torch
+      # Set this to `true` if using `train_loader.dataset.packing_ratio` below
+      attn_uses_sequence_id: false
+
+# Tokenizer
+tokenizer:
+  name: mosaicml/mpt-7b
+  kwargs:
+    model_max_length: ${max_seq_len}
+
+# Dataloaders
+train_loader:
+  name: finetuning
+  dataset:
+    hf_name: json
+    hf_kwargs:
+        data_dir: /opt/ml/input/data/train/
+    split: train
+    tokenizer_name: ${tokenizer_name}
+    max_seq_len: ${max_seq_len}
+    allow_pad_trimming: false
+    decoder_only_format: true
+    shuffle: true
+  drop_last: true
+  num_workers: 16
+
+eval_loader:
+  name: finetuning
+  dataset:
+    hf_name: json
+    hf_kwargs:
+        data_dir: /opt/ml/input/data/test/
+    split: train
+    tokenizer_name: ${tokenizer_name}
+    max_seq_len: ${max_seq_len}
+    allow_pad_trimming: false
+    decoder_only_format: true
+    shuffle: true
+  drop_last: true
+  num_workers: 16
+
+# Optimization
+scheduler:
+  name: linear_decay_with_warmup  # linear no warmup is HF default which dolly used
+  t_warmup: 50ba  # add some warmup though, seems to help with MPT
+  alpha_f: 0
+
+optimizer:
+  # Based on Dolly
+  name: decoupled_adamw
+  lr: 5.0e-6
+  betas:
+  - 0.9
+  - 0.999
+  eps: 1.0e-8
+  weight_decay: 0
+
+algorithms:
+  gradient_clipping:
+    clipping_type: norm
+    clipping_threshold: 1.0
+
+max_duration: 3ep  # 2-3 epochs seems like the sweet spot
+eval_interval: 1ep
+eval_subset_num_batches: -1
+eval_first: false
+global_train_batch_size: 128 # somewhere in the 6-8 * numgpus range seems good
+
+# System
+seed: ${global_seed}
+device_eval_batch_size: 8
+device_train_microbatch_size: auto
+precision: amp_bf16
+
+# FSDP
+fsdp_config:
+  sharding_strategy: FULL_SHARD
+  mixed_precision: PURE
+  activation_checkpointing: true
+  activation_checkpointing_reentrant: false
+  activation_cpu_offload: false
+  limit_all_gathers: true
+  verbose: false
+
+# Logging
+progress_bar: true
+log_to_console: true
+console_log_interval: 1ba
+
+callbacks:
+  speed_monitor:
+    window_size: 10
+  lr_monitor: {}
+  memory_monitor: {}
+  runtime_estimator: {}
+
+# Checkpoint to local filesystem or remote object store
+save_folder: /tmp/checkpoints
+dist_timeout: 2000
